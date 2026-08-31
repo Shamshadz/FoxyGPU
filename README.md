@@ -19,12 +19,21 @@ shell command, stream its logs, and expose whatever port it's listening on with 
 own public URL.
 
 ```
- local machine                              Google Colab VM (GPU runtime)
-┌─────────────────┐   HTTPS/WSS via         ┌─────────────────────────────┐
-│  foxygpu CLI     │◄──cloudflared tunnel──►│  foxygpu_agent (FastAPI)     │
-└─────────────────┘                         │  spawns your process         │
-                                              │  (uvicorn / npm / anything)  │
-                                              └─────────────────────────────┘
+┌───────────────────┐
+│    foxygpu CLI    │
+│  (local machine)  │
+└───────────────────┘
+          │
+          │  HTTPS/WSS via a Cloudflare Tunnel
+          │  (no account needed)
+          ▼
+┌──────────────────────────────┐
+│         foxygpu_agent        │
+│    (Colab VM, GPU runtime)   │
+│                              │
+│      spawns your process     │
+│  (uvicorn / npm / anything)  │
+└──────────────────────────────┘
 ```
 
 Every agent endpoint requires a bearer token generated at startup — the tunnel URL
