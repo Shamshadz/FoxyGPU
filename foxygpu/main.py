@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 from typing import Optional, Set
 
+import requests
 import typer
 import websockets
 from rich.console import Console
@@ -13,7 +14,9 @@ from rich.table import Table
 from . import github as gh
 from .client import DISCONNECTED_MESSAGE, AgentClient
 from .config import save_config
+from .detect import detect_command
 from .notebook_builder import build_notebook_json
+from .project_config import CONFIG_FILENAME, ProjectConfigError, load_project_config, write_project_config
 
 app = typer.Typer(help="Run local code on Google Colab's free GPU.", add_completion=False)
 console = Console()
@@ -208,8 +211,14 @@ def _deploy(
         console.print(f"[green]Started[/green] process {process_id} on assigned port {port}")
         if expose_after:
             console.print(f"Requesting tunnel for port {port} ...")
-            result = client.create_tunnel(port)
-            console.print(f"[green]Public URL:[/green] {result['url']}")
+            try:
+                result = client.create_tunnel(port)
+                console.print(f"[green]Public URL:[/green] {result['url']}")
+            except requests.exceptions.HTTPError as e:
+                console.print(
+                    f"[yellow]Could not expose port {port} automatically[/yellow] ({e}). "
+                    f"The process is still running — try `foxygpu expose {port}` again once resolved."
+                )
         else:
             console.print(f"Run `foxygpu expose` (or `foxygpu expose {port}`) once it's listening.")
         console.print("Streaming logs (Ctrl+C stops watching, the remote process keeps running) ...\n")
@@ -270,6 +279,60 @@ def redeploy(
     """
     client = AgentClient.from_config()
     _deploy(client, path, cmd, name, expose_after, stop_previous=True)
+
+
+@app.command()
+def deploy(
+    path: Path = typer.Argument(Path("."), help="Project directory to deploy"),
+) -> None:
+    """One-command deploy: read PATH/foxygpu.yaml if present; otherwise try to
+    detect your framework, write one, and use that.
+
+    Behaves like `redeploy` (stops the previous deployment of the same
+    project first). Supported detection today: a FastAPI or Flask app next
+    to a requirements.txt, or a Vite/Next.js/generic npm-scripted project
+    next to a package.json. Anything else: write foxygpu.yaml yourself, e.g.
+
+    \b
+      runtime: colab
+      gpu: true
+      command: pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port $PORT
+    """
+    client = AgentClient.from_config()
+    root = path.resolve()
+    if not root.is_dir():
+        console.print(f"[red]{root} is not a directory[/red]")
+        raise typer.Exit(1)
+
+    try:
+        project_config = load_project_config(root)
+    except ProjectConfigError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+    if project_config is None:
+        detected = detect_command(root)
+        if not detected:
+            console.print(
+                f"[red]No {CONFIG_FILENAME} found in {root}, and couldn't auto-detect a "
+                "framework.[/red]\n"
+                f"Write a {CONFIG_FILENAME} yourself (see `foxygpu deploy --help`), or use "
+                "`foxygpu run`/`redeploy` with an explicit --cmd instead."
+            )
+            raise typer.Exit(1)
+        config_path = write_project_config(root, detected)
+        console.print(f"[green]Detected a project[/green] — wrote {config_path.name}:")
+        console.print(f"  command: {detected}")
+        project_config = load_project_config(root)
+
+    _deploy(
+        client,
+        path,
+        project_config.command,
+        project_config.name,
+        project_config.expose,
+        stop_previous=True,
+    )
 
 
 @app.command()

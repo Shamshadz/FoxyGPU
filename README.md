@@ -98,6 +98,31 @@ foxygpu run ./my-fastapi-app --cmd 'pip install -r requirements.txt && uvicorn m
 > does **not** work in `cmd.exe` (no concept of single-quoted literal strings,
 > and it interprets `&&` itself) — use PowerShell or a bash-like shell instead.
 
+### One-command deploy (`foxygpu.yaml`)
+
+Once you know your `--cmd`, save it to a `foxygpu.yaml` in your project so you
+don't have to retype it:
+
+```yaml
+runtime: colab   # only "colab" works today — see the multi-runtime issue
+gpu: true
+command: pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port $PORT
+```
+
+Then just:
+
+```bash
+foxygpu deploy
+```
+
+`deploy` behaves like `redeploy` (stops the previous deployment of the same
+project first) and exposes automatically by default. If there's no
+`foxygpu.yaml` yet, it tries to auto-detect one for you — a FastAPI/Flask app
+next to `requirements.txt`, or a Vite/Next.js/generic npm project next to
+`package.json` — writes it, and deploys. If nothing's recognized, it tells you
+so rather than guessing; write the file yourself or use `run`/`redeploy` with
+an explicit `--cmd` instead.
+
 Logs stream live, and the CLI prints which port got assigned. `--expose`
 immediately opens a public tunnel once the process starts and prints the URL.
 If you skip it, expose later — with no argument it defaults to the most
@@ -186,6 +211,12 @@ pytest
 
 ## Known limitations
 
+- `foxygpu deploy`'s auto-detection is deliberately limited (FastAPI/Flask +
+  requirements.txt, or Vite/Next.js/generic npm + package.json) — a
+  confidently wrong guess is worse than admitting it doesn't recognize your
+  project. When it doesn't, write `foxygpu.yaml` by hand.
+- `runtime:` in `foxygpu.yaml` only supports `colab` today. Kaggle/RunPod/
+  Lambda/local-GPU support is tracked as a future multi-runtime effort.
 - FastAPI is only used to build the agent itself (the control-plane server running
   inside Colab) — it is not a requirement for what you deploy. `foxygpu run` just
   executes whatever shell command you give it via `--cmd`, so any language or

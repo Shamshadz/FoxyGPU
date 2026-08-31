@@ -4,6 +4,7 @@ needed) against a real running agent (conftest.agent_server)."""
 import re
 import sys
 
+import yaml
 from typer.testing import CliRunner
 
 from foxygpu.main import app as cli_app
@@ -124,3 +125,117 @@ def test_redeploy_with_no_previous_deployment_just_deploys(agent_server, tmp_pat
     assert result.exit_code == 0, result.output
     assert "Stopping previous deployment" not in result.output
     assert "first deploy" in result.output
+
+
+def test_deploy_uses_existing_config_without_overwriting_it(agent_server, tmp_path):
+    base_url, token = agent_server
+    runner.invoke(cli_app, ["connect", base_url, "--token", token])
+
+    project_dir = tmp_path / "configured_app"
+    project_dir.mkdir()
+    (project_dir / "app.py").write_text("print('from config')\n")
+    config_path = project_dir / "foxygpu.yaml"
+    # Use yaml.safe_dump rather than a hand-written f-string: sys.executable
+    # can contain backslashes (Windows paths), which a raw double-quoted YAML
+    # scalar would try to interpret as escape sequences.
+    config_path.write_text(
+        yaml.safe_dump({"runtime": "colab", "gpu": True, "command": f'"{sys.executable}" app.py'})
+    )
+    original_config_text = config_path.read_text()
+
+    result = runner.invoke(cli_app, ["deploy", str(project_dir)])
+    assert result.exit_code == 0, result.output
+    assert "Detected a project" not in result.output
+    assert "from config" in result.output
+    assert config_path.read_text() == original_config_text  # untouched
+
+
+def test_deploy_auto_detects_and_writes_config_when_missing(agent_server, tmp_path, monkeypatch):
+    import foxygpu.main as main_module
+
+    base_url, token = agent_server
+    runner.invoke(cli_app, ["connect", base_url, "--token", token])
+
+    project_dir = tmp_path / "fastapi_app"
+    project_dir.mkdir()
+    (project_dir / "requirements.txt").write_text("fastapi\nuvicorn\n")
+    (project_dir / "main.py").write_text(
+        "from fastapi import FastAPI\napp = FastAPI()\nprint('detected app ran')\n"
+    )
+
+    # detect_command's actual heuristics are unit-tested in test_detect.py.
+    # Here we only need to verify `deploy` uses whatever it returns and
+    # writes it to disk — stub a short-lived command instead of a real
+    # (forever-running) uvicorn server, which would hang this test waiting
+    # on a log stream that never ends.
+    monkeypatch.setattr(main_module, "detect_command", lambda root: f'"{sys.executable}" main.py')
+
+    result = runner.invoke(cli_app, ["deploy", str(project_dir)])
+    assert result.exit_code == 0, result.output
+    assert "Detected a project" in result.output
+    assert "detected app ran" in result.output
+
+    config_path = project_dir / "foxygpu.yaml"
+    assert config_path.exists()
+    assert sys.executable in config_path.read_text()
+
+
+def test_deploy_with_no_config_and_nothing_detectable_fails_clearly(agent_server, tmp_path):
+    base_url, token = agent_server
+    runner.invoke(cli_app, ["connect", base_url, "--token", token])
+
+    project_dir = tmp_path / "mystery_project"
+    project_dir.mkdir()
+    (project_dir / "readme.txt").write_text("no recognizable framework here\n")
+
+    result = runner.invoke(cli_app, ["deploy", str(project_dir)])
+    assert result.exit_code != 0
+    assert "couldn't auto-detect" in result.output
+    assert not (project_dir / "foxygpu.yaml").exists()
+
+
+def test_deploy_invalid_config_fails_clearly(agent_server, tmp_path):
+    base_url, token = agent_server
+    runner.invoke(cli_app, ["connect", base_url, "--token", token])
+
+    project_dir = tmp_path / "bad_config_app"
+    project_dir.mkdir()
+    (project_dir / "foxygpu.yaml").write_text("runtime: kaggle\ncommand: echo hi\n")
+
+    result = runner.invoke(cli_app, ["deploy", str(project_dir)])
+    assert result.exit_code != 0
+    assert "kaggle" in result.output
+
+
+def test_deploy_stops_previous_deployment_like_redeploy(agent_server, tmp_path):
+    import io
+    import zipfile
+
+    from foxygpu.client import AgentClient
+
+    base_url, token = agent_server
+    runner.invoke(cli_app, ["connect", base_url, "--token", token])
+
+    client = AgentClient(base_url, token)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("app.py", "import time\ntime.sleep(30)\n")
+    zip_path = tmp_path / "prev.zip"
+    zip_path.write_bytes(buf.getvalue())
+    old_project_id = client.upload_project(str(zip_path), "deploy_app")
+    old_process_id, _ = client.start_process(old_project_id, f'"{sys.executable}" app.py')
+
+    project_dir = tmp_path / "deploy_app"
+    project_dir.mkdir()
+    (project_dir / "app.py").write_text("print('redeployed via deploy')\n")
+    (project_dir / "foxygpu.yaml").write_text(
+        yaml.safe_dump({"command": f'"{sys.executable}" app.py'})
+    )
+
+    result = runner.invoke(cli_app, ["deploy", str(project_dir)])
+    assert result.exit_code == 0, result.output
+    assert "Stopping previous deployment" in result.output
+    assert "redeployed via deploy" in result.output
+
+    old_entry = next(p for p in client.list_processes() if p["id"] == old_process_id)
+    assert old_entry["status"] == "stopped"
