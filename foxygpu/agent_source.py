@@ -20,6 +20,7 @@ control URL without the token cannot execute anything through it.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import secrets
@@ -89,11 +90,12 @@ def _find_free_port() -> int:
 
 
 class ProcessHandle:
-    def __init__(self, process_id: str, project_id: str, cmd: str, port: int):
+    def __init__(self, process_id: str, project_id: str, cmd: str, port: int, env_keys: List[str]):
         self.id = process_id
         self.project_id = project_id
         self.cmd = cmd
         self.port = port
+        self.env_keys = env_keys  # names only - values are never retained here
         self.status = "starting"
         self.pid: Optional[int] = None
         self.log_buffer: deque = deque(maxlen=2000)
@@ -144,24 +146,39 @@ async def create_project(file: UploadFile = File(...), name: str = Form("project
 
 
 @app.post("/projects/{project_id}/start", dependencies=[Depends(check_auth)])
-async def start_project(project_id: str, cmd: str = Form(...)):
+async def start_project(project_id: str, cmd: str = Form(...), env: str = Form("{}")):
     project = PROJECTS.get(project_id)
     if not project:
         raise HTTPException(404, "project not found")
+
+    try:
+        extra_env = json.loads(env)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "env must be a JSON object")
+    if not isinstance(extra_env, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in extra_env.items()
+    ):
+        raise HTTPException(400, "env must be a JSON object of string keys to string values")
+
     process_id = uuid.uuid4().hex[:12]
     port = _find_free_port()
-    handle = ProcessHandle(process_id, project_id, cmd, port)
+    handle = ProcessHandle(process_id, project_id, cmd, port, list(extra_env.keys()))
     PROCESSES[process_id] = handle
-    asyncio.create_task(_run_process(handle, project.path, cmd, port))
+    asyncio.create_task(_run_process(handle, project.path, cmd, port, extra_env))
     return {"process_id": process_id, "port": port}
 
 
-async def _run_process(handle: ProcessHandle, cwd: Path, cmd: str, port: int) -> None:
+async def _run_process(
+    handle: ProcessHandle, cwd: Path, cmd: str, port: int, extra_env: Dict[str, str]
+) -> None:
     handle.append_log(f"$ {cmd}")
     handle.append_log(f"[assigned port {port} - reference $PORT in your start command]")
+    if handle.env_keys:
+        handle.append_log(f"[env vars set: {', '.join(handle.env_keys)} (values not logged)]")
     env = os.environ.copy()
     env["PORT"] = str(port)
     env["FOXYGPU_PORT"] = str(port)
+    env.update(extra_env)
     proc = await asyncio.create_subprocess_shell(
         cmd,
         cwd=str(cwd),
@@ -224,6 +241,7 @@ async def list_processes():
             "status": h.status,
             "pid": h.pid,
             "port": h.port,
+            "env_keys": h.env_keys,
         }
         for h in PROCESSES.values()
     ]
@@ -241,6 +259,7 @@ async def get_process(process_id: str):
         "pid": handle.pid,
         "cmd": handle.cmd,
         "port": handle.port,
+        "env_keys": handle.env_keys,
     }
 
 

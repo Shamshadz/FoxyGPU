@@ -239,3 +239,125 @@ def test_deploy_stops_previous_deployment_like_redeploy(agent_server, tmp_path):
 
     old_entry = next(p for p in client.list_processes() if p["id"] == old_process_id)
     assert old_entry["status"] == "stopped"
+
+
+def test_run_with_env_flag_injects_value_without_leaking_it_into_status(agent_server, tmp_path):
+    base_url, token = agent_server
+    runner.invoke(cli_app, ["connect", base_url, "--token", token])
+
+    project_dir = tmp_path / "secret_app"
+    project_dir.mkdir()
+    (project_dir / "app.py").write_text(
+        "import os\nprint('GOT_SECRET=' + os.environ['MY_SECRET'])\n"
+    )
+
+    result = runner.invoke(
+        cli_app,
+        [
+            "run",
+            str(project_dir),
+            "--cmd",
+            f'"{sys.executable}" app.py',
+            "--env",
+            "MY_SECRET=super-secret-value",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "GOT_SECRET=super-secret-value" in result.output  # the app actually received it
+    assert "Passing env vars: MY_SECRET" in result.output  # key name shown
+    assert "super-secret-value" not in result.output.replace(
+        "GOT_SECRET=super-secret-value", ""
+    )  # value never printed anywhere except the app's own deliberate echo
+
+    status_result = runner.invoke(cli_app, ["status"])
+    assert "super-secret-value" not in status_result.output
+    assert "MY_SECRET" in status_result.output  # key name shown in the Env vars column
+
+
+def test_run_with_env_file_flag(agent_server, tmp_path):
+    base_url, token = agent_server
+    runner.invoke(cli_app, ["connect", base_url, "--token", token])
+
+    project_dir = tmp_path / "envfile_app"
+    project_dir.mkdir()
+    (project_dir / "app.py").write_text(
+        "import os\nprint('FROM_FILE=' + os.environ['FILE_SECRET'])\n"
+    )
+    env_file = tmp_path / "secrets.env"
+    env_file.write_text("FILE_SECRET=value-from-file\n")
+
+    result = runner.invoke(
+        cli_app,
+        [
+            "run",
+            str(project_dir),
+            "--cmd",
+            f'"{sys.executable}" app.py',
+            "--env-file",
+            str(env_file),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "FROM_FILE=value-from-file" in result.output
+
+
+def test_env_flag_overrides_env_file_on_conflict(agent_server, tmp_path):
+    base_url, token = agent_server
+    runner.invoke(cli_app, ["connect", base_url, "--token", token])
+
+    project_dir = tmp_path / "override_app"
+    project_dir.mkdir()
+    (project_dir / "app.py").write_text("import os\nprint('VAL=' + os.environ['KEY'])\n")
+    env_file = tmp_path / "secrets.env"
+    env_file.write_text("KEY=from_file\n")
+
+    result = runner.invoke(
+        cli_app,
+        [
+            "run",
+            str(project_dir),
+            "--cmd",
+            f'"{sys.executable}" app.py',
+            "--env-file",
+            str(env_file),
+            "--env",
+            "KEY=from_cli",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "VAL=from_cli" in result.output
+
+
+def test_deploy_reads_env_from_config(agent_server, tmp_path):
+    base_url, token = agent_server
+    runner.invoke(cli_app, ["connect", base_url, "--token", token])
+
+    project_dir = tmp_path / "configured_env_app"
+    project_dir.mkdir()
+    (project_dir / "app.py").write_text(
+        "import os\nprint('CFG_SECRET=' + os.environ['CFG_SECRET'])\n"
+    )
+    (project_dir / "foxygpu.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "command": f'"{sys.executable}" app.py',
+                "env": {"CFG_SECRET": "value-from-config"},
+            }
+        )
+    )
+
+    result = runner.invoke(cli_app, ["deploy", str(project_dir)])
+    assert result.exit_code == 0, result.output
+    assert "CFG_SECRET=value-from-config" in result.output
+
+
+def test_malformed_env_flag_fails_clearly(agent_server, tmp_path):
+    base_url, token = agent_server
+    runner.invoke(cli_app, ["connect", base_url, "--token", token])
+
+    result = runner.invoke(
+        cli_app,
+        ["run", str(tmp_path), "--cmd", "echo hi", "--env", "NOEQUALSSIGN"],
+    )
+    assert result.exit_code != 0
+    assert "KEY=VALUE" in result.output

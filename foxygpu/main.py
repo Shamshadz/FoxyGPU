@@ -3,7 +3,7 @@ import tempfile
 import webbrowser
 import zipfile
 from pathlib import Path
-from typing import Optional, Set
+from typing import Dict, List, Optional, Set
 
 import requests
 import typer
@@ -15,8 +15,30 @@ from . import github as gh
 from .client import DISCONNECTED_MESSAGE, AgentClient
 from .config import save_config
 from .detect import detect_command
+from .envfile import EnvFileError, parse_env_file
 from .notebook_builder import build_notebook_json
 from .project_config import CONFIG_FILENAME, ProjectConfigError, load_project_config, write_project_config
+
+
+def _resolve_env(
+    env_pairs: List[str],
+    env_file: Optional[Path],
+) -> Dict[str, str]:
+    """--env-file values first, then --env KEY=VALUE overrides on conflicts."""
+    resolved: Dict[str, str] = {}
+    if env_file:
+        try:
+            resolved.update(parse_env_file(env_file))
+        except EnvFileError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
+    for pair in env_pairs:
+        if "=" not in pair:
+            console.print(f"[red]--env expects KEY=VALUE, got: {pair!r}[/red]")
+            raise typer.Exit(1)
+        key, _, value = pair.partition("=")
+        resolved[key] = value
+    return resolved
 
 app = typer.Typer(help="Run local code on Google Colab's free GPU.", add_completion=False)
 console = Console()
@@ -184,6 +206,7 @@ def _deploy(
     name: Optional[str],
     expose_after: bool,
     stop_previous: bool,
+    env: Optional[Dict[str, str]] = None,
 ) -> None:
     root = path.resolve()
     if not root.is_dir():
@@ -207,7 +230,9 @@ def _deploy(
         console.print("Uploading ...")
         project_id = client.upload_project(str(zip_path), project_name)
         console.print(f"[green]Project uploaded[/green] ({project_id})")
-        process_id, port = client.start_process(project_id, cmd)
+        if env:
+            console.print(f"Passing env vars: {', '.join(env.keys())} (values not shown/logged)")
+        process_id, port = client.start_process(project_id, cmd, env=env)
         console.print(f"[green]Started[/green] process {process_id} on assigned port {port}")
         if expose_after:
             console.print(f"Requesting tunnel for port {port} ...")
@@ -241,6 +266,16 @@ def run(
     expose_after: bool = typer.Option(
         False, "--expose", help="Immediately open a public tunnel to the assigned port"
     ),
+    env_pairs: List[str] = typer.Option(
+        [],
+        "--env",
+        "-e",
+        help="Extra env var as KEY=VALUE (repeatable). Never embedded in --cmd, so it "
+        "won't show up in `foxygpu status` or the logs, unlike 'export SECRET=x && ...'",
+    ),
+    env_file: Optional[Path] = typer.Option(
+        None, "--env-file", help="Load KEY=VALUE lines from a file (e.g. .env)"
+    ),
 ) -> None:
     """Zip PATH, upload it to the agent, and start CMD on the Colab VM.
 
@@ -249,7 +284,8 @@ def run(
     port - reference $PORT in --cmd instead of a literal number.
     """
     client = AgentClient.from_config()
-    _deploy(client, path, cmd, name, expose_after, stop_previous=False)
+    env = _resolve_env(env_pairs, env_file)
+    _deploy(client, path, cmd, name, expose_after, stop_previous=False, env=env)
 
 
 @app.command(epilog=REDEPLOY_EXAMPLES_EPILOG)
@@ -268,6 +304,16 @@ def redeploy(
     expose_after: bool = typer.Option(
         False, "--expose", help="Immediately open a public tunnel to the assigned port"
     ),
+    env_pairs: List[str] = typer.Option(
+        [],
+        "--env",
+        "-e",
+        help="Extra env var as KEY=VALUE (repeatable). Never embedded in --cmd, so it "
+        "won't show up in `foxygpu status` or the logs, unlike 'export SECRET=x && ...'",
+    ),
+    env_file: Optional[Path] = typer.Option(
+        None, "--env-file", help="Load KEY=VALUE lines from a file (e.g. .env)"
+    ),
 ) -> None:
     """Stop the previous deployment of this project (if any), then run the updated code.
 
@@ -278,12 +324,22 @@ def redeploy(
     port keeps working automatically — no need to `expose` again.
     """
     client = AgentClient.from_config()
-    _deploy(client, path, cmd, name, expose_after, stop_previous=True)
+    env = _resolve_env(env_pairs, env_file)
+    _deploy(client, path, cmd, name, expose_after, stop_previous=True, env=env)
 
 
 @app.command()
 def deploy(
     path: Path = typer.Argument(Path("."), help="Project directory to deploy"),
+    env_pairs: List[str] = typer.Option(
+        [],
+        "--env",
+        "-e",
+        help="Extra env var as KEY=VALUE (repeatable), overriding foxygpu.yaml's env/env_file",
+    ),
+    env_file: Optional[Path] = typer.Option(
+        None, "--env-file", help="Load KEY=VALUE lines from a file, overriding foxygpu.yaml's env"
+    ),
 ) -> None:
     """One-command deploy: read PATH/foxygpu.yaml if present; otherwise try to
     detect your framework, write one, and use that.
@@ -297,6 +353,8 @@ def deploy(
       runtime: colab
       gpu: true
       command: pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port $PORT
+      env_file: .env   # don't put real secrets directly under env: in a committed file
+
     """
     client = AgentClient.from_config()
     root = path.resolve()
@@ -325,6 +383,9 @@ def deploy(
         console.print(f"  command: {detected}")
         project_config = load_project_config(root)
 
+    env = dict(project_config.env)
+    env.update(_resolve_env(env_pairs, env_file))
+
     _deploy(
         client,
         path,
@@ -332,6 +393,7 @@ def deploy(
         project_config.name,
         project_config.expose,
         stop_previous=True,
+        env=env,
     )
 
 
@@ -369,8 +431,12 @@ def status() -> None:
     table.add_column("Status")
     table.add_column("PID")
     table.add_column("Port")
+    table.add_column("Env vars")
     for p in processes:
-        table.add_row(p["id"], p["cmd"], p["status"], str(p["pid"]), str(p.get("port")))
+        env_keys = p.get("env_keys") or []
+        table.add_row(
+            p["id"], p["cmd"], p["status"], str(p["pid"]), str(p.get("port")), ", ".join(env_keys)
+        )
     console.print(table)
 
 

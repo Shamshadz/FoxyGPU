@@ -132,6 +132,38 @@ recently started process's port:
 foxygpu expose
 ```
 
+### Databases, external APIs, and secrets
+
+An **externally-hosted** database or API (a hosted Postgres, a third-party
+API, an OAuth provider) just works — the Colab VM has normal outbound
+internet access, no different from any other server. A **local-only**
+database your app points at via `localhost` won't be reachable from the VM;
+either run it on the VM too as part of your command (state is wiped when the
+session ends) or point at an externally-hosted instance instead.
+
+For secrets (API keys, DB passwords) — **don't** embed them with
+`export SECRET=x && ...` in `--cmd`: the full command is stored and shown
+verbatim in `foxygpu status` and echoed as the first line of streamed logs.
+Instead, use `--env`/`--env-file`, which inject them directly as process
+environment variables without ever appearing in `--cmd`, `status`, or the logs
+(only the variable *names* are ever shown, never the values):
+
+```bash
+foxygpu run ./my-app --cmd 'uvicorn main:app --host 0.0.0.0 --port $PORT' --env DATABASE_URL=postgres://... --env-file .env
+```
+
+`--env` (repeatable) and `--env-file` (a `.env`-style `KEY=VALUE` file) both
+work on `run`, `redeploy`, and `deploy`; `--env` wins on a conflicting key.
+In `foxygpu.yaml`, use `env_file: .env` for the same thing — **avoid** putting
+real secret values directly under an inline `env:` mapping in a file you
+commit to git; `env_file` should point at a local, gitignored file instead.
+
+One more gotcha specific to this tool: if your app does OAuth login, the
+callback URL is normally registered as a fixed value with the provider.
+FoxyGPU's exposed URL is a fresh random `*.trycloudflare.com` address on every
+`expose`/redeploy, which breaks flows expecting a stable callback URL — not
+something to work around today, just worth knowing going in.
+
 Edited your code and want to update what's running? `foxygpu run` always
 starts a fresh, separate deployment — it won't stop whatever's already running
 first. Use `redeploy` instead, which stops the previous deployment of the same

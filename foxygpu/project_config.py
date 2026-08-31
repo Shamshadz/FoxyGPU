@@ -6,11 +6,13 @@ now so multi-runtime support (Kaggle, RunPod, Lambda, local GPU — see the
 project's GitHub issues) doesn't require breaking the file format later.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 import yaml
+
+from .envfile import EnvFileError, parse_env_file
 
 CONFIG_FILENAME = "foxygpu.yaml"
 SUPPORTED_RUNTIMES = {"colab"}
@@ -27,11 +29,18 @@ class ProjectConfig:
     gpu: bool = True
     name: Optional[str] = None
     expose: bool = True
+    env: Dict[str, str] = field(default_factory=dict)
 
 
 def load_project_config(root: Path) -> Optional[ProjectConfig]:
     """Returns None if no foxygpu.yaml exists in root. Raises
-    ProjectConfigError if one exists but is invalid."""
+    ProjectConfigError if one exists but is invalid.
+
+    Do not put real secrets directly under `env:` in a foxygpu.yaml you
+    commit to git — use `env_file:` pointing at a local, gitignored file
+    (e.g. .env) instead. `env:` entries override values from `env_file:`
+    on key conflicts.
+    """
     path = root / CONFIG_FILENAME
     if not path.exists():
         return None
@@ -54,12 +63,26 @@ def load_project_config(root: Path) -> Optional[ProjectConfig]:
             "currently work) — see the project's GitHub issues for multi-runtime progress"
         )
 
+    resolved_env: Dict[str, str] = {}
+    env_file = data.get("env_file")
+    if env_file:
+        try:
+            resolved_env.update(parse_env_file(root / env_file))
+        except EnvFileError as e:
+            raise ProjectConfigError(str(e))
+
+    inline_env = data.get("env") or {}
+    if not isinstance(inline_env, dict):
+        raise ProjectConfigError(f"{CONFIG_FILENAME}'s 'env' field must be a mapping")
+    resolved_env.update({str(k): str(v) for k, v in inline_env.items()})
+
     return ProjectConfig(
         command=data["command"],
         runtime=runtime,
         gpu=bool(data.get("gpu", True)),
         name=data.get("name"),
         expose=bool(data.get("expose", True)),
+        env=resolved_env,
     )
 
 

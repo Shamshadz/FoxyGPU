@@ -2,6 +2,7 @@
 against a real running instance (see conftest.agent_server)."""
 
 import asyncio
+import json
 import socket
 import sys
 import time
@@ -55,6 +56,69 @@ def test_upload_run_and_port_injection(agent_server, auth_headers, upload_projec
     assert f"PORT_ENV={port}" in log_lines
 
 
+def test_env_vars_are_injected_and_never_logged(agent_server, auth_headers, upload_project):
+    base_url, _ = agent_server
+    project_id = upload_project().json()["project_id"]
+
+    cmd = f'{sys.executable} -c "import os; print(\'SECRET_VALUE=\' + os.environ[\'MY_SECRET\'])"'
+    resp = requests.post(
+        f"{base_url}/projects/{project_id}/start",
+        headers=auth_headers,
+        data={"cmd": cmd, "env": json.dumps({"MY_SECRET": "sk-super-secret-value"})},
+    )
+    assert resp.status_code == 200
+    process_id = resp.json()["process_id"]
+    time.sleep(1.0)
+
+    resp = requests.get(f"{base_url}/processes/{process_id}", headers=auth_headers)
+    info = resp.json()
+    assert info["env_keys"] == ["MY_SECRET"]  # key name shown
+
+    log_lines = list(agent_module.PROCESSES[process_id].log_buffer)
+    full_log = "\n".join(log_lines)
+    # The child process itself received the real value (proves injection worked)...
+    assert "SECRET_VALUE=sk-super-secret-value" in full_log
+    # ...but the agent's own bookkeeping/echo of the command never repeats the
+    # secret value anywhere else in the log stream.
+    secret_mentions = full_log.count("sk-super-secret-value")
+    assert secret_mentions == 1  # only the child process's own deliberate print
+
+
+def test_invalid_env_json_rejected(agent_server, auth_headers, upload_project):
+    base_url, _ = agent_server
+    project_id = upload_project().json()["project_id"]
+    resp = requests.post(
+        f"{base_url}/projects/{project_id}/start",
+        headers=auth_headers,
+        data={"cmd": "echo hi", "env": "not valid json"},
+    )
+    assert resp.status_code == 400
+
+
+def test_non_string_env_values_rejected(agent_server, auth_headers, upload_project):
+    base_url, _ = agent_server
+    project_id = upload_project().json()["project_id"]
+    resp = requests.post(
+        f"{base_url}/projects/{project_id}/start",
+        headers=auth_headers,
+        data={"cmd": "echo hi", "env": json.dumps({"PORT_OVERRIDE": 1234})},
+    )
+    assert resp.status_code == 400
+
+
+def test_no_env_defaults_to_empty(agent_server, auth_headers, upload_project):
+    base_url, _ = agent_server
+    project_id = upload_project().json()["project_id"]
+    resp = requests.post(
+        f"{base_url}/projects/{project_id}/start", headers=auth_headers, data={"cmd": "echo hi"}
+    )
+    assert resp.status_code == 200
+    process_id = resp.json()["process_id"]
+    time.sleep(0.5)
+    info = requests.get(f"{base_url}/processes/{process_id}", headers=auth_headers).json()
+    assert info["env_keys"] == []
+
+
 def test_port_falls_back_when_preferred_port_is_occupied(agent_server, auth_headers, upload_project):
     base_url, _ = agent_server
     project_id = upload_project().json()["project_id"]
@@ -95,7 +159,7 @@ def test_stop_on_process_already_dead_at_os_level_does_not_500(agent_server):
     ProcessLookupError gracefully instead of raising a raw 500."""
 
     async def run():
-        handle = agent_module.ProcessHandle("regress-test", "proj", "true", 9999)
+        handle = agent_module.ProcessHandle("regress-test", "proj", "true", 9999, [])
         proc = await asyncio.create_subprocess_shell(f'{sys.executable} -c "pass"')
         await proc.wait()  # genuinely dead at the OS level now
         handle.proc = proc

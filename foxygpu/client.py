@@ -1,5 +1,6 @@
+import json
 import sys
-from typing import Optional
+from typing import Dict, Optional
 
 import requests
 
@@ -46,11 +47,16 @@ class AgentClient:
             )
         return resp.json()["project_id"]
 
-    def start_process(self, project_id: str, cmd: str):
+    def start_process(self, project_id: str, cmd: str, env: Optional[Dict[str, str]] = None):
         """Returns (process_id, port) — the agent picks a free port and injects it
-        into the command's environment as $PORT."""
+        into the command's environment as $PORT. `env` is injected too, without
+        ever being embedded in `cmd` itself (so it doesn't show up in
+        `foxygpu status` or the streamed logs, unlike `export SECRET=x && ...`)."""
         resp = self._request(
-            "post", f"/projects/{project_id}/start", data={"cmd": cmd}, timeout=30
+            "post",
+            f"/projects/{project_id}/start",
+            data={"cmd": cmd, "env": json.dumps(env or {})},
+            timeout=30,
         )
         data = resp.json()
         return data["process_id"], data["port"]

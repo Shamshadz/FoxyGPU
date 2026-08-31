@@ -73,3 +73,45 @@ def test_write_handles_commands_with_special_yaml_characters(tmp_path):
     write_project_config(tmp_path, cmd)
     config = load_project_config(tmp_path)
     assert config.command == cmd
+
+
+def test_no_env_or_env_file_gives_empty_dict(tmp_path):
+    (tmp_path / CONFIG_FILENAME).write_text("command: echo hi\n")
+    config = load_project_config(tmp_path)
+    assert config.env == {}
+
+
+def test_inline_env_mapping(tmp_path):
+    (tmp_path / CONFIG_FILENAME).write_text(
+        "command: echo hi\nenv:\n  FOO: bar\n  BAZ: qux\n"
+    )
+    config = load_project_config(tmp_path)
+    assert config.env == {"FOO": "bar", "BAZ": "qux"}
+
+
+def test_env_file_is_loaded_relative_to_project_root(tmp_path):
+    (tmp_path / ".env").write_text("DATABASE_URL=postgres://localhost/db\n")
+    (tmp_path / CONFIG_FILENAME).write_text("command: echo hi\nenv_file: .env\n")
+    config = load_project_config(tmp_path)
+    assert config.env == {"DATABASE_URL": "postgres://localhost/db"}
+
+
+def test_inline_env_overrides_env_file_on_conflict(tmp_path):
+    (tmp_path / ".env").write_text("FOO=from_file\nSHARED=file_value\n")
+    (tmp_path / CONFIG_FILENAME).write_text(
+        "command: echo hi\nenv_file: .env\nenv:\n  SHARED: inline_value\n"
+    )
+    config = load_project_config(tmp_path)
+    assert config.env == {"FOO": "from_file", "SHARED": "inline_value"}
+
+
+def test_missing_env_file_raises_clear_error(tmp_path):
+    (tmp_path / CONFIG_FILENAME).write_text("command: echo hi\nenv_file: nope.env\n")
+    with pytest.raises(ProjectConfigError, match="not found"):
+        load_project_config(tmp_path)
+
+
+def test_non_mapping_env_raises(tmp_path):
+    (tmp_path / CONFIG_FILENAME).write_text("command: echo hi\nenv: not_a_mapping\n")
+    with pytest.raises(ProjectConfigError, match="env"):
+        load_project_config(tmp_path)
