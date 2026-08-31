@@ -1,6 +1,6 @@
 [project]
 name = "foxygpu"
-version = "0.2.0"
+version = "0.2.1"
 description = "Run local code on Google Colab's free GPU"
 readme = "PYPI_README.md"
 requires-python = ">=3.9"
