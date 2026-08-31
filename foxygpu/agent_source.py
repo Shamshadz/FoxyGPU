@@ -116,6 +116,18 @@ def root():
     return {"service": "foxygpu-agent", "status": "ok"}
 
 
+def _safe_extract(zf: zipfile.ZipFile, dest: Path) -> None:
+    """Reject zip members that would extract outside dest (zip-slip)."""
+    dest_resolved = dest.resolve()
+    for member in zf.namelist():
+        target = (dest_resolved / member).resolve()
+        try:
+            target.relative_to(dest_resolved)
+        except ValueError:
+            raise HTTPException(400, f"Zip contains an unsafe path: {member!r}")
+    zf.extractall(dest_resolved)
+
+
 @app.post("/projects", dependencies=[Depends(check_auth)])
 async def create_project(file: UploadFile = File(...), name: str = Form("project")):
     project_id = uuid.uuid4().hex[:12]
@@ -125,7 +137,7 @@ async def create_project(file: UploadFile = File(...), name: str = Form("project
     with open(zip_path, "wb") as f:
         f.write(await file.read())
     with zipfile.ZipFile(zip_path) as zf:
-        zf.extractall(project_dir)
+        _safe_extract(zf, project_dir)
     zip_path.unlink()
     PROJECTS[project_id] = Project(project_id, name, project_dir)
     return {"project_id": project_id, "path": str(project_dir)}

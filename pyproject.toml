@@ -23,6 +23,18 @@ dependencies = [
   "rich>=13.0",
 ]
 
+[project.optional-dependencies]
+# Only needed to run the test suite locally — agent_source.py is never
+# imported by the end-user CLI, only read as text and shipped to Colab, so
+# these stay out of the core install.
+dev = [
+  "pytest>=7.4",
+  "pytest-timeout>=2.2",
+  "fastapi>=0.100",
+  "uvicorn>=0.23",
+  "python-multipart>=0.0.6",
+]
+
 [project.urls]
 Homepage = "https://github.com/Shamshadz/FoxyGPU"
 
@@ -31,6 +43,10 @@ foxygpu = "foxygpu.main:app"
 
 [tool.setuptools.packages.find]
 include = ["foxygpu*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 60
 
 [build-system]
 requires = ["setuptools>=77.0.0"]

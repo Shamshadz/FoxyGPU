@@ -134,12 +134,30 @@ foxygpu run ./train-job --cmd 'pip install -r requirements.txt && python train.p
 
 See `foxygpu run --help` for this same set of examples from the CLI.
 
+### Full working example
+
+[examples/ollama-chat](examples/ollama-chat/) is a complete ChatGPT-style app
+(FastAPI backend + a small frontend) that runs a real GPU-backed Ollama model
+on Colab — a good first thing to deploy to confirm your setup end-to-end.
+
 ## Excluding files from upload
 
 By default `.git`, `node_modules`, `__pycache__`, `venv`/`.venv`, and a few build
 directories are excluded when zipping your project. Add more patterns by copying
 [.foxygpuignore.default](.foxygpuignore.default) to `.foxygpuignore` in your project
 root.
+
+## Development
+
+The test suite runs a real instance of the agent locally (no Colab needed) and
+drives it over HTTP/WebSocket, plus in-process CLI tests via Typer's test
+runner. It never touches your real `~/.foxygpu/config.json` — every test gets
+an isolated one automatically.
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
 
 ## Known limitations
 
@@ -167,7 +185,8 @@ root.
   and falling back to another free one if that's taken (e.g. a second
   concurrent project).
 - **A command with an animated progress bar can hang your whole `--cmd` chain
-  forever.** Some CLI tools (Ollama's `pull` is one example) never exit their
+  forever.** Some CLI tools (Ollama's `pull` is one — see
+  [examples/ollama-chat](examples/ollama-chat/README.md)) never exit their
   progress renderer when run through a non-interactive pipe like the one the
   agent uses to capture output, even though the real work finishes. Since
   `foxygpu run` chains commands with `&&`, a hung one blocks everything after
