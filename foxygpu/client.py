@@ -5,6 +5,13 @@ import requests
 
 from .config import load_config
 
+DISCONNECTED_MESSAGE = (
+    "Could not reach the Colab agent at {url}.\n"
+    "The Colab runtime likely disconnected or the session expired (free-tier "
+    "sessions are ephemeral). Run `foxygpu launch` again, then `foxygpu connect` "
+    "with the new URL/token it prints."
+)
+
 
 class AgentClient:
     def __init__(self, url: str, token: str):
@@ -20,28 +27,31 @@ class AgentClient:
             raise SystemExit(1)
         return cls(cfg["url"], cfg["token"])
 
+    def _request(self, method: str, path: str, **kwargs) -> requests.Response:
+        try:
+            resp = requests.request(method, f"{self.url}{path}", headers=self.headers, **kwargs)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            raise SystemExit(DISCONNECTED_MESSAGE.format(url=self.url))
+        resp.raise_for_status()
+        return resp
+
     def upload_project(self, zip_path: str, name: str) -> str:
         with open(zip_path, "rb") as f:
-            resp = requests.post(
-                f"{self.url}/projects",
-                headers=self.headers,
+            resp = self._request(
+                "post",
+                "/projects",
                 files={"file": (f"{name}.zip", f, "application/zip")},
                 data={"name": name},
                 timeout=120,
             )
-        resp.raise_for_status()
         return resp.json()["project_id"]
 
     def start_process(self, project_id: str, cmd: str):
         """Returns (process_id, port) — the agent picks a free port and injects it
         into the command's environment as $PORT."""
-        resp = requests.post(
-            f"{self.url}/projects/{project_id}/start",
-            headers=self.headers,
-            data={"cmd": cmd},
-            timeout=30,
+        resp = self._request(
+            "post", f"/projects/{project_id}/start", data={"cmd": cmd}, timeout=30
         )
-        resp.raise_for_status()
         data = resp.json()
         return data["process_id"], data["port"]
 
@@ -54,26 +64,16 @@ class AgentClient:
         return None
 
     def list_processes(self):
-        resp = requests.get(f"{self.url}/processes", headers=self.headers, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
+        return self._request("get", "/processes", timeout=15).json()
 
     def stop_process(self, process_id: str):
-        resp = requests.post(f"{self.url}/processes/{process_id}/stop", headers=self.headers, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
+        return self._request("post", f"/processes/{process_id}/stop", timeout=15).json()
 
     def gpu_status(self):
-        resp = requests.get(f"{self.url}/gpu", headers=self.headers, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
+        return self._request("get", "/gpu", timeout=15).json()
 
     def create_tunnel(self, port: int):
-        resp = requests.post(
-            f"{self.url}/tunnels", headers=self.headers, data={"port": port}, timeout=30
-        )
-        resp.raise_for_status()
-        return resp.json()
+        return self._request("post", "/tunnels", data={"port": port}, timeout=30).json()
 
     def ws_logs_url(self, process_id: str) -> str:
         base = self.url.replace("https://", "wss://").replace("http://", "ws://")

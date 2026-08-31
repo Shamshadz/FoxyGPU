@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import github as gh
-from .client import AgentClient
+from .client import DISCONNECTED_MESSAGE, AgentClient
 from .config import save_config
 from .notebook_builder import build_notebook_json
 
@@ -82,8 +82,10 @@ async def _stream_logs(client: AgentClient, process_id: str) -> None:
             f"  foxygpu logs {process_id}   # reconnect and watch logs again\n"
             f"  foxygpu stop {process_id}   # stop it"
         )
-    except websockets.exceptions.ConnectionClosed:
-        pass
+    except websockets.exceptions.ConnectionClosedOK:
+        pass  # the process finished and the agent closed the stream normally
+    except (websockets.exceptions.ConnectionClosedError, OSError):
+        console.print(f"\n[red]{DISCONNECTED_MESSAGE.format(url=client.url)}[/red]")
 
 
 @app.command()

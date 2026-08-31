@@ -167,8 +167,7 @@ root.
   and falling back to another free one if that's taken (e.g. a second
   concurrent project).
 - **A command with an animated progress bar can hang your whole `--cmd` chain
-  forever.** Some CLI tools (Ollama's `pull` is one — see
-  [examples/ollama-chat](examples/ollama-chat/README.md)) never exit their
+  forever.** Some CLI tools (Ollama's `pull` is one example) never exit their
   progress renderer when run through a non-interactive pipe like the one the
   agent uses to capture output, even though the real work finishes. Since
   `foxygpu run` chains commands with `&&`, a hung one blocks everything after
