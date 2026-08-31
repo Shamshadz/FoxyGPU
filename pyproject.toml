@@ -37,6 +37,8 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/Shamshadz/FoxyGPU"
+Repository = "https://github.com/Shamshadz/FoxyGPU"
+Issues = "https://github.com/Shamshadz/FoxyGPU/issues"
 
 [project.scripts]
 foxygpu = "foxygpu.main:app"
