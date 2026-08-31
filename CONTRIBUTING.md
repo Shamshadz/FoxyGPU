@@ -35,6 +35,9 @@ overwrote a real developer's live connection.
 - `foxygpu/github.py` — Gist publishing for the `--gist` launch path
 - `foxygpu/notebook_builder.py` — builds the runner notebook from
   `agent_source.py`
+- `foxygpu/project_config.py` — loads/writes `foxygpu.yaml`
+- `foxygpu/detect.py` — best-effort framework auto-detection for `deploy`
+- `foxygpu/envfile.py` — minimal `.env`-style file parsing for `--env-file`
 - `notebook/FoxyGPU_Runner.ipynb` — the **committed, static** copy of that
   notebook that `foxygpu launch`'s default (no-token) path opens directly from
   this repo on GitHub. If you change `agent_source.py`, regenerate it:
@@ -69,3 +72,24 @@ verify a change beyond the unit tests:
 
 Use the issue templates — they ask for the minimum needed to act on a report
 (repro steps, environment, expected vs. actual) without excessive ceremony.
+
+## Releasing (maintainers)
+
+Publishing to PyPI is automated via `.github/workflows/publish.yml`, triggered
+by publishing a GitHub Release. No token is stored anywhere — it uses PyPI's
+Trusted Publishing (OIDC), configured once at
+https://pypi.org/manage/project/foxygpu/settings/publishing/ to trust this
+repo's `publish.yml` workflow running in a GitHub Environment named `pypi`
+(create that environment under repo Settings → Environments if it doesn't
+exist).
+
+To cut a release:
+1. Bump `version` in `pyproject.toml` (SemVer — patch for fixes, minor for
+   backward-compatible features, major for breaking changes).
+2. Commit and push to `main`.
+3. Create a GitHub Release with a tag matching the new version (e.g. `v0.3.0`)
+   — either via the GitHub UI ("Draft a new release") or
+   `gh release create v0.3.0 --generate-notes`.
+4. The workflow builds and publishes automatically. Check
+   https://github.com/Shamshadz/FoxyGPU/actions/workflows/publish.yml and
+   https://pypi.org/project/foxygpu/ to confirm.
