@@ -77,7 +77,11 @@ async def _stream_logs(client: AgentClient, process_id: str) -> None:
             async for message in ws:
                 console.print(message)
     except (KeyboardInterrupt, asyncio.CancelledError):
-        pass
+        console.print(
+            f"\n[yellow]Detached.[/yellow] The remote process ({process_id}) keeps running on Colab.\n"
+            f"  foxygpu logs {process_id}   # reconnect and watch logs again\n"
+            f"  foxygpu stop {process_id}   # stop it"
+        )
     except websockets.exceptions.ConnectionClosed:
         pass
 
@@ -143,7 +147,27 @@ def connect(
     console.print(f"[green]Connected[/green] to {url}")
 
 
-@app.command()
+RUN_EXAMPLES_EPILOG = """
+Examples:
+
+FastAPI / Python web app:
+  foxygpu run ./my-app --cmd 'pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port $PORT' --expose
+
+Node.js app (read process.env.PORT in your server code):
+  foxygpu run ./my-node-app --cmd 'npm install && node server.js' --expose
+
+Frontend dev server (Vite/React/etc.):
+  foxygpu run ./my-frontend --cmd 'npm install && npm run dev -- --host 0.0.0.0 --port $PORT' --expose
+
+One-off script or training job (no server, skip --expose):
+  foxygpu run ./train-job --cmd 'pip install -r requirements.txt && python train.py'
+
+PowerShell / bash / zsh all use the same single-quote syntax above for --cmd.
+cmd.exe does not - use PowerShell or a bash-like shell instead.
+"""
+
+
+@app.command(epilog=RUN_EXAMPLES_EPILOG)
 def run(
     path: Path = typer.Argument(Path("."), help="Project directory to upload and run"),
     cmd: str = typer.Option(
@@ -162,7 +186,7 @@ def run(
 
     The agent picks a free port for you (env vars $PORT / $FOXYGPU_PORT) so you
     don't need to hardcode one or worry about colliding with the agent's own
-    port — reference $PORT in --cmd instead of a literal number.
+    port - reference $PORT in --cmd instead of a literal number.
     """
     client = AgentClient.from_config()
     root = path.resolve()
@@ -203,7 +227,7 @@ def expose(
     if port is None:
         port = client.latest_process_port()
         if port is None:
-            console.print("[red]No running process to infer a port from — pass one explicitly.[/red]")
+            console.print("[red]No running process to infer a port from - pass one explicitly.[/red]")
             raise typer.Exit(1)
         console.print(f"No port given, using the most recently started process's port: {port}")
     console.print(f"Requesting tunnel for port {port} ...")
@@ -239,9 +263,28 @@ def logs(process_id: str = typer.Argument(..., help="Process ID from `foxygpu st
 
 
 @app.command()
-def stop(process_id: str = typer.Argument(..., help="Process ID from `foxygpu status`")) -> None:
-    """Stop a running process."""
+def stop(
+    process_id: Optional[str] = typer.Argument(None, help="Process ID from `foxygpu status`"),
+    all_: bool = typer.Option(False, "--all", help="Stop every currently-running process"),
+) -> None:
+    """Stop a running process, or every running process with --all."""
     client = AgentClient.from_config()
+
+    if all_:
+        processes = [p for p in client.list_processes() if p["status"] == "running"]
+        if not processes:
+            console.print("No running processes.")
+            return
+        for p in processes:
+            result = client.stop_process(p["id"])
+            console.print(f"Process {p['id']}: {result['status']}")
+        console.print(f"[green]Stopped {len(processes)} process(es).[/green]")
+        return
+
+    if not process_id:
+        console.print("[red]Pass a process ID, or use --all to stop every running process.[/red]")
+        raise typer.Exit(1)
+
     result = client.stop_process(process_id)
     console.print(f"Process {process_id}: {result['status']}")
 

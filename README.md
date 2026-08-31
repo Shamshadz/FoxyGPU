@@ -78,24 +78,23 @@ a literal number so you never have to think about which ports are free or
 reserved:
 
 ```bash
-foxygpu run ./my-fastapi-app --cmd "pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port \$PORT"
+foxygpu run ./my-fastapi-app --cmd 'pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port $PORT' --expose
 ```
 
-Logs stream live, and the CLI prints which port got assigned. In another
-terminal, expose it — with no argument this defaults to the most recently
-started process's port:
+> **Shell note**: use **single quotes** around the `--cmd` value, exactly as
+> above, in PowerShell, bash, or zsh — all three treat single quotes as a
+> literal string, so `$PORT` and `&&` reach the remote command unchanged. This
+> does **not** work in `cmd.exe` (no concept of single-quoted literal strings,
+> and it interprets `&&` itself) — use PowerShell or a bash-like shell instead.
+
+Logs stream live, and the CLI prints which port got assigned. `--expose`
+immediately opens a public tunnel once the process starts and prints the URL.
+If you skip it, expose later — with no argument it defaults to the most
+recently started process's port:
 
 ```bash
 foxygpu expose
 ```
-
-Or pass `--expose` to `run` to open the tunnel immediately after starting:
-
-```bash
-foxygpu run ./my-fastapi-app --cmd "... --port \$PORT" --expose
-```
-
-This prints a public URL you can open in a browser.
 
 Check GPU status and running processes (including their assigned ports):
 
@@ -103,19 +102,37 @@ Check GPU status and running processes (including their assigned ports):
 foxygpu status
 ```
 
-Stream logs for a process, or stop it:
+Stream logs for a process, reconnect after detaching, or stop it (add `--all`
+to stop everything):
 
 ```bash
 foxygpu logs <process-id>
 foxygpu stop <process-id>
+foxygpu stop --all
 ```
 
-### Frontend example
+Pressing Ctrl+C while logs are streaming only detaches your terminal — the
+remote process keeps running on Colab. The CLI reminds you of the `logs`/`stop`
+commands above when you do this.
 
+### More examples
+
+Node.js app (read `process.env.PORT` in your server code):
 ```bash
-foxygpu run ./my-frontend --cmd "npm install && npm run dev -- --host 0.0.0.0 --port \$PORT"
-foxygpu expose
+foxygpu run ./my-node-app --cmd 'npm install && node server.js' --expose
 ```
+
+Frontend dev server (Vite/React/etc.):
+```bash
+foxygpu run ./my-frontend --cmd 'npm install && npm run dev -- --host 0.0.0.0 --port $PORT' --expose
+```
+
+One-off script or training job (no server, so skip `--expose`):
+```bash
+foxygpu run ./train-job --cmd 'pip install -r requirements.txt && python train.py'
+```
+
+See `foxygpu run --help` for this same set of examples from the CLI.
 
 ## Excluding files from upload
 
@@ -149,3 +166,12 @@ root.
   Usage) and the agent hands you a free port automatically, preferring `9876`
   and falling back to another free one if that's taken (e.g. a second
   concurrent project).
+- **A command with an animated progress bar can hang your whole `--cmd` chain
+  forever.** Some CLI tools (Ollama's `pull` is one — see
+  [examples/ollama-chat](examples/ollama-chat/README.md)) never exit their
+  progress renderer when run through a non-interactive pipe like the one the
+  agent uses to capture output, even though the real work finishes. Since
+  `foxygpu run` chains commands with `&&`, a hung one blocks everything after
+  it. If a step seems stuck, check whether it actually finished (e.g. via a
+  second `foxygpu run` with a quick status-checking command) before assuming
+  it's slow — the fix is usually prefixing that one command with `TERM=dumb`.
