@@ -71,3 +71,56 @@ def test_stop_all_stops_every_running_process(agent_server, tmp_path):
     result = runner.invoke(cli_app, ["stop", "--all"])
     assert result.exit_code == 0, result.output
     assert "Stopped" in result.output or "No running processes" in result.output
+
+
+def test_redeploy_stops_previous_deployment_of_same_project(agent_server, tmp_path):
+    import io
+    import zipfile
+
+    from foxygpu.client import AgentClient
+
+    base_url, token = agent_server
+    runner.invoke(cli_app, ["connect", base_url, "--token", token])
+
+    # Start a long-running "previous deployment" directly via the client
+    # (bypassing `run`'s blocking log stream) so it's still running when
+    # `redeploy` goes looking for it under the same project name.
+    client = AgentClient(base_url, token)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("app.py", "import time\ntime.sleep(30)\n")
+    zip_path = tmp_path / "prev.zip"
+    zip_path.write_bytes(buf.getvalue())
+    old_project_id = client.upload_project(str(zip_path), "myapp")
+    old_process_id, _ = client.start_process(old_project_id, f'"{sys.executable}" app.py')
+
+    project_dir = tmp_path / "myapp"
+    project_dir.mkdir()
+    (project_dir / "app.py").write_text("print('redeployed')\n")
+
+    result = runner.invoke(
+        cli_app, ["redeploy", str(project_dir), "--cmd", f'"{sys.executable}" app.py']
+    )
+    assert result.exit_code == 0, result.output
+    assert "Stopping previous deployment" in result.output
+    assert old_process_id in result.output
+    assert "redeployed" in result.output
+
+    old_entry = next(p for p in client.list_processes() if p["id"] == old_process_id)
+    assert old_entry["status"] == "stopped"
+
+
+def test_redeploy_with_no_previous_deployment_just_deploys(agent_server, tmp_path):
+    base_url, token = agent_server
+    runner.invoke(cli_app, ["connect", base_url, "--token", token])
+
+    project_dir = tmp_path / "brand_new_app"
+    project_dir.mkdir()
+    (project_dir / "app.py").write_text("print('first deploy')\n")
+
+    result = runner.invoke(
+        cli_app, ["redeploy", str(project_dir), "--cmd", f'"{sys.executable}" app.py']
+    )
+    assert result.exit_code == 0, result.output
+    assert "Stopping previous deployment" not in result.output
+    assert "first deploy" in result.output

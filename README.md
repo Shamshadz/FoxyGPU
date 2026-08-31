@@ -96,6 +96,20 @@ recently started process's port:
 foxygpu expose
 ```
 
+Edited your code and want to update what's running? `foxygpu run` always
+starts a fresh, separate deployment — it won't stop whatever's already running
+first. Use `redeploy` instead, which stops the previous deployment of the same
+project (matched by directory name, or `--name` if you gave one) before
+starting the new one:
+
+```bash
+foxygpu redeploy ./my-fastapi-app --cmd 'pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port $PORT' --expose
+```
+
+If the new run lands back on the same port — likely, since stopping the old
+one just freed it — an existing exposed URL for that port keeps working
+automatically, no need to `expose` again.
+
 Check GPU status and running processes (including their assigned ports):
 
 ```bash

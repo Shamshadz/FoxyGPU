@@ -208,12 +208,18 @@ async def stop_process(process_id: str):
     return {"status": handle.status}
 
 
+def _project_name(project_id: str) -> Optional[str]:
+    project = PROJECTS.get(project_id)
+    return project.name if project else None
+
+
 @app.get("/processes", dependencies=[Depends(check_auth)])
 async def list_processes():
     return [
         {
             "id": h.id,
             "project_id": h.project_id,
+            "project_name": _project_name(h.project_id),
             "cmd": h.cmd,
             "status": h.status,
             "pid": h.pid,
@@ -230,6 +236,7 @@ async def get_process(process_id: str):
         raise HTTPException(404, "process not found")
     return {
         "id": handle.id,
+        "project_name": _project_name(handle.project_id),
         "status": handle.status,
         "pid": handle.pid,
         "cmd": handle.cmd,

@@ -149,24 +149,73 @@ def connect(
     console.print(f"[green]Connected[/green] to {url}")
 
 
-RUN_EXAMPLES_EPILOG = """
+def _examples_epilog(command: str) -> str:
+    return f"""
 Examples:
 
 FastAPI / Python web app:
-  foxygpu run ./my-app --cmd 'pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port $PORT' --expose
+  foxygpu {command} ./my-app --cmd 'pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port $PORT' --expose
 
 Node.js app (read process.env.PORT in your server code):
-  foxygpu run ./my-node-app --cmd 'npm install && node server.js' --expose
+  foxygpu {command} ./my-node-app --cmd 'npm install && node server.js' --expose
 
 Frontend dev server (Vite/React/etc.):
-  foxygpu run ./my-frontend --cmd 'npm install && npm run dev -- --host 0.0.0.0 --port $PORT' --expose
+  foxygpu {command} ./my-frontend --cmd 'npm install && npm run dev -- --host 0.0.0.0 --port $PORT' --expose
 
 One-off script or training job (no server, skip --expose):
-  foxygpu run ./train-job --cmd 'pip install -r requirements.txt && python train.py'
+  foxygpu {command} ./train-job --cmd 'pip install -r requirements.txt && python train.py'
 
 PowerShell / bash / zsh all use the same single-quote syntax above for --cmd.
 cmd.exe does not - use PowerShell or a bash-like shell instead.
 """
+
+
+RUN_EXAMPLES_EPILOG = _examples_epilog("run")
+REDEPLOY_EXAMPLES_EPILOG = _examples_epilog("redeploy")
+
+
+def _deploy(
+    client: AgentClient,
+    path: Path,
+    cmd: str,
+    name: Optional[str],
+    expose_after: bool,
+    stop_previous: bool,
+) -> None:
+    root = path.resolve()
+    if not root.is_dir():
+        console.print(f"[red]{root} is not a directory[/red]")
+        raise typer.Exit(1)
+
+    project_name = name or root.name
+
+    if stop_previous:
+        previous = client.latest_process_by_name(project_name)
+        if previous and previous["status"] == "running":
+            console.print(
+                f"Stopping previous deployment of '{project_name}' ({previous['id']}) ..."
+            )
+            client.stop_process(previous["id"])
+
+    ignores = _load_ignores(root)
+    console.print(f"Zipping {root} ...")
+    zip_path = _zip_project(root, ignores)
+    try:
+        console.print("Uploading ...")
+        project_id = client.upload_project(str(zip_path), project_name)
+        console.print(f"[green]Project uploaded[/green] ({project_id})")
+        process_id, port = client.start_process(project_id, cmd)
+        console.print(f"[green]Started[/green] process {process_id} on assigned port {port}")
+        if expose_after:
+            console.print(f"Requesting tunnel for port {port} ...")
+            result = client.create_tunnel(port)
+            console.print(f"[green]Public URL:[/green] {result['url']}")
+        else:
+            console.print(f"Run `foxygpu expose` (or `foxygpu expose {port}`) once it's listening.")
+        console.print("Streaming logs (Ctrl+C stops watching, the remote process keeps running) ...\n")
+        asyncio.run(_stream_logs(client, process_id))
+    finally:
+        zip_path.unlink(missing_ok=True)
 
 
 @app.command(epilog=RUN_EXAMPLES_EPILOG)
@@ -191,31 +240,36 @@ def run(
     port - reference $PORT in --cmd instead of a literal number.
     """
     client = AgentClient.from_config()
-    root = path.resolve()
-    if not root.is_dir():
-        console.print(f"[red]{root} is not a directory[/red]")
-        raise typer.Exit(1)
+    _deploy(client, path, cmd, name, expose_after, stop_previous=False)
 
-    project_name = name or root.name
-    ignores = _load_ignores(root)
-    console.print(f"Zipping {root} ...")
-    zip_path = _zip_project(root, ignores)
-    try:
-        console.print("Uploading ...")
-        project_id = client.upload_project(str(zip_path), project_name)
-        console.print(f"[green]Project uploaded[/green] ({project_id})")
-        process_id, port = client.start_process(project_id, cmd)
-        console.print(f"[green]Started[/green] process {process_id} on assigned port {port}")
-        if expose_after:
-            console.print(f"Requesting tunnel for port {port} ...")
-            result = client.create_tunnel(port)
-            console.print(f"[green]Public URL:[/green] {result['url']}")
-        else:
-            console.print(f"Run `foxygpu expose` (or `foxygpu expose {port}`) once it's listening.")
-        console.print("Streaming logs (Ctrl+C stops watching, the remote process keeps running) ...\n")
-        asyncio.run(_stream_logs(client, process_id))
-    finally:
-        zip_path.unlink(missing_ok=True)
+
+@app.command(epilog=REDEPLOY_EXAMPLES_EPILOG)
+def redeploy(
+    path: Path = typer.Argument(Path("."), help="Project directory to upload and run"),
+    cmd: str = typer.Option(
+        ...,
+        "--cmd",
+        "-c",
+        help="Shell command to start the app. Reference $PORT for the port the "
+        "agent assigns you, e.g. 'uvicorn main:app --host 0.0.0.0 --port $PORT'",
+    ),
+    name: Optional[str] = typer.Option(
+        None, "--name", "-n", help="Project name (also used to find the previous deployment to stop)"
+    ),
+    expose_after: bool = typer.Option(
+        False, "--expose", help="Immediately open a public tunnel to the assigned port"
+    ),
+) -> None:
+    """Stop the previous deployment of this project (if any), then run the updated code.
+
+    Identifies "the previous deployment" by project name — PATH's directory
+    name by default, same as `run`, or --name if you passed one originally.
+    If the new run happens to land back on the same port (likely, since
+    stopping the old one just freed it), an existing exposed URL for that
+    port keeps working automatically — no need to `expose` again.
+    """
+    client = AgentClient.from_config()
+    _deploy(client, path, cmd, name, expose_after, stop_previous=True)
 
 
 @app.command()

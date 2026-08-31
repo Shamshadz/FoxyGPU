@@ -31,3 +31,35 @@ def test_latest_process_port_returns_most_recently_started(agent_server, upload_
     )
 
     assert client.latest_process_port() == second_port
+
+
+def test_latest_process_by_name_none_when_no_match(agent_server):
+    base_url, token = agent_server
+    client = AgentClient(base_url, token)
+    assert client.latest_process_by_name("nonexistent") is None
+
+
+def test_latest_process_by_name_finds_most_recent_matching(agent_server, upload_project):
+    base_url, token = agent_server
+    client = AgentClient(base_url, token)
+
+    project_id_a = upload_project(name="app-a").json()["project_id"]
+    process_id_a, _ = client.start_process(
+        project_id_a, f'{sys.executable} -c "import time; time.sleep(5)"'
+    )
+    time.sleep(0.2)
+    project_id_b = upload_project(name="app-b").json()["project_id"]
+    process_id_b, _ = client.start_process(
+        project_id_b, f'{sys.executable} -c "import time; time.sleep(5)"'
+    )
+    time.sleep(0.2)
+    # a second, later deployment of app-a
+    process_id_a2, _ = client.start_process(
+        project_id_a, f'{sys.executable} -c "import time; time.sleep(5)"'
+    )
+
+    match = client.latest_process_by_name("app-a")
+    assert match["id"] == process_id_a2  # the more recent of the two app-a runs
+
+    match_b = client.latest_process_by_name("app-b")
+    assert match_b["id"] == process_id_b

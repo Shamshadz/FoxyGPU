@@ -63,6 +63,14 @@ class AgentClient:
                 return p["port"]
         return None
 
+    def latest_process_by_name(self, project_name: str) -> Optional[dict]:
+        """Most recently started process for a given project name (matching
+        `run`'s default of the deploy directory's basename), or None."""
+        for p in reversed(self.list_processes()):
+            if p.get("project_name") == project_name:
+                return p
+        return None
+
     def list_processes(self):
         return self._request("get", "/processes", timeout=15).json()
 
