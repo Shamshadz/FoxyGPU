@@ -2,7 +2,7 @@
 name = "foxygpu"
 version = "0.2.0"
 description = "Run local code on Google Colab's free GPU"
-readme = "README.md"
+readme = "PYPI_README.md"
 requires-python = ">=3.9"
 license = "MIT"
 authors = [

@@ -27,13 +27,13 @@ own public URL.
           │  HTTPS/WSS via a Cloudflare Tunnel
           │  (no account needed)
           ▼
-┌──────────────────────────────┐
-│         foxygpu_agent        │
-│    (Colab VM, GPU runtime)   │
-│                              │
-│      spawns your process     │
-│  (uvicorn / npm / anything)  │
-└──────────────────────────────┘
+┌───────────────────────────────────┐
+│         foxygpu_agent             │
+│    (Colab VM, GPU runtime)        │
+│                                   │
+│      spawns your process          │
+│  (uvicorn / npm / anything)       │
+└───────────────────────────────────┘
 ```
 
 Every agent endpoint requires a bearer token generated at startup — the tunnel URL
@@ -44,8 +44,11 @@ alone isn't enough to run anything on your VM.
 Everything — the CLI and the Colab agent it deploys — ships as one Python package:
 
 ```bash
-pip install -e .
+pip install foxygpu
 ```
+
+Working from a clone instead (e.g. to modify `foxygpu/agent_source.py`)?
+`pip install -e .` from the repo root; see [CONTRIBUTING.md](https://github.com/Shamshadz/FoxyGPU/blob/main/CONTRIBUTING.md) for the full dev setup.
 
 ## Setup
 
@@ -104,7 +107,7 @@ Once you know your `--cmd`, save it to a `foxygpu.yaml` in your project so you
 don't have to retype it:
 
 ```yaml
-runtime: colab   # only "colab" works today — see the multi-runtime issue
+runtime: colab # only "colab" works today — see the multi-runtime issue
 gpu: true
 command: pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
@@ -146,7 +149,7 @@ For secrets (API keys, DB passwords) — **don't** embed them with
 verbatim in `foxygpu status` and echoed as the first line of streamed logs.
 Instead, use `--env`/`--env-file`, which inject them directly as process
 environment variables without ever appearing in `--cmd`, `status`, or the logs
-(only the variable *names* are ever shown, never the values):
+(only the variable _names_ are ever shown, never the values):
 
 ```bash
 foxygpu run ./my-app --cmd 'uvicorn main:app --host 0.0.0.0 --port $PORT' --env DATABASE_URL=postgres://... --env-file .env
@@ -200,16 +203,19 @@ commands above when you do this.
 ### More examples
 
 Node.js app (read `process.env.PORT` in your server code):
+
 ```bash
 foxygpu run ./my-node-app --cmd 'npm install && node server.js' --expose
 ```
 
 Frontend dev server (Vite/React/etc.):
+
 ```bash
 foxygpu run ./my-frontend --cmd 'npm install && npm run dev -- --host 0.0.0.0 --port $PORT' --expose
 ```
 
 One-off script or training job (no server, so skip `--expose`):
+
 ```bash
 foxygpu run ./train-job --cmd 'pip install -r requirements.txt && python train.py'
 ```
