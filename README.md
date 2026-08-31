@@ -1,5 +1,7 @@
 # FoxyGPU
 
+[![Tests](https://github.com/Shamshadz/FoxyGPU/actions/workflows/tests.yml/badge.svg)](https://github.com/Shamshadz/FoxyGPU/actions/workflows/tests.yml)
+
 Run local code — FastAPI backends, frontend dev servers, or anything else — on
 Google Colab's free-tier GPU, driven entirely from your own machine.
 
