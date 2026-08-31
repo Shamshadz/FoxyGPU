@@ -1,0 +1,35 @@
+[project]
+name = "foxygpu"
+version = "0.1.0"
+description = "Run local code on Google Colab's free GPU"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+  { name = "Shamshad Choudhary", email = "chaudhary.s.shamshad07@gmail.com" }
+]
+keywords = ["colab", "gpu", "ollama", "deployment", "cli", "fastapi"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Topic :: Software Development",
+]
+dependencies = [
+  "typer>=0.9",
+  "requests>=2.31",
+  "websockets>=12.0",
+  "rich>=13.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Shamshadz/FoxyGPU"
+
+[project.scripts]
+foxygpu = "foxygpu.main:app"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

@@ -1,0 +1,13 @@
+# Copy this to your project root as `.foxygpuignore` to add extra excludes.
+# One path-component pattern per line (matched against any part of the relative
+# path, not full globs). Everything below is already excluded by default.
+.git
+node_modules
+__pycache__
+venv
+.venv
+.foxygpu
+.mypy_cache
+.pytest_cache
+dist
+build
