@@ -218,7 +218,7 @@ See `foxygpu run --help` for this same set of examples from the CLI.
 
 ### Full working example
 
-[examples/ollama-chat](examples/ollama-chat/) is a complete ChatGPT-style app
+[examples/ollama-chat](https://github.com/Shamshadz/FoxyGPU/tree/main/examples/ollama-chat) is a complete ChatGPT-style app
 (FastAPI backend + a small frontend) that runs a real GPU-backed Ollama model
 on Colab — a good first thing to deploy to confirm your setup end-to-end.
 
@@ -226,7 +226,7 @@ on Colab — a good first thing to deploy to confirm your setup end-to-end.
 
 By default `.git`, `node_modules`, `__pycache__`, `venv`/`.venv`, and a few build
 directories are excluded when zipping your project. Add more patterns by copying
-[.foxygpuignore.default](.foxygpuignore.default) to `.foxygpuignore` in your project
+[.foxygpuignore.default](https://github.com/Shamshadz/FoxyGPU/blob/main/.foxygpuignore.default) to `.foxygpuignore` in your project
 root.
 
 ## Development
@@ -274,7 +274,7 @@ pytest
   concurrent project).
 - **A command with an animated progress bar can hang your whole `--cmd` chain
   forever.** Some CLI tools (Ollama's `pull` is one — see
-  [examples/ollama-chat](examples/ollama-chat/README.md)) never exit their
+  [examples/ollama-chat](https://github.com/Shamshadz/FoxyGPU/blob/main/examples/ollama-chat/README.md)) never exit their
   progress renderer when run through a non-interactive pipe like the one the
   agent uses to capture output, even though the real work finishes. Since
   `foxygpu run` chains commands with `&&`, a hung one blocks everything after
