@@ -583,6 +583,27 @@ def logs(process_id: str = typer.Argument(..., help="Process ID from `foxygpu st
 
 
 @app.command()
+def pull(
+    process_id: str = typer.Argument(..., help="Completed process ID from `foxygpu status`"),
+    remote_path: str = typer.Argument(..., help="Artifact path relative to the uploaded project"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Local output file path"),
+) -> None:
+    """Download an artifact produced by a process before its Colab session ends."""
+    destination = output or Path(remote_path).name
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    client = AgentClient.from_config()
+    with _transfer_progress() as progress:
+        task = progress.add_task(f"Downloading {remote_path}", total=None)
+        client.download_process_file(
+            process_id,
+            remote_path,
+            str(destination),
+            lambda completed, total: progress.update(task, completed=completed, total=total or None),
+        )
+    console.print(f"[green]Downloaded[/green] {remote_path} → {destination}")
+
+
+@app.command()
 def stop(
     process_id: Optional[str] = typer.Argument(None, help="Process ID from `foxygpu status`"),
     all_: bool = typer.Option(False, "--all", help="Stop every currently-running process"),

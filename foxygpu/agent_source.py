@@ -45,6 +45,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.responses import FileResponse
 
 TOKEN = secrets.token_urlsafe(32)
 WORKSPACE = Path.home() / "foxygpu_workspace"
@@ -261,6 +262,30 @@ async def get_process(process_id: str):
         "port": handle.port,
         "env_keys": handle.env_keys,
     }
+
+
+@app.get("/processes/{process_id}/files/{remote_path:path}", dependencies=[Depends(check_auth)])
+async def download_process_file(process_id: str, remote_path: str):
+    """Download a regular file from the project belonging to PROCESS_ID."""
+    handle = PROCESSES.get(process_id)
+    if not handle:
+        raise HTTPException(404, "process not found")
+    project = PROJECTS.get(handle.project_id)
+    if not project:
+        raise HTTPException(404, "project not found")
+
+    requested = Path(remote_path)
+    if requested.is_absolute():
+        raise HTTPException(400, "path must be relative to the uploaded project")
+    root = project.path.resolve()
+    target = (root / requested).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        raise HTTPException(400, "path escapes the uploaded project")
+    if not target.is_file():
+        raise HTTPException(404, "file not found")
+    return FileResponse(target, filename=target.name, media_type="application/octet-stream")
 
 
 @app.websocket("/ws/logs/{process_id}")

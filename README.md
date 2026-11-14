@@ -239,6 +239,12 @@ must be inside `--path`; FoxyGPU adds that project root to `PYTHONPATH`, so a
 notebook in a subdirectory can import sibling project packages. `.foxygpuignore`
 still controls what gets uploaded.
 
+Save outputs within the project, then retrieve them before the Colab session ends:
+
+```bash
+foxygpu pull <process-id> artifacts/model.pth --output ./artifacts/model.pth
+```
+
 See `foxygpu run --help` for this same set of examples from the CLI.
 
 ### Full working example

@@ -1,6 +1,7 @@
 import json
 import sys
 from typing import Callable, Dict, Optional
+from urllib.parse import quote
 
 import requests
 from requests_toolbelt.multipart.encoder import MultipartEncoder, MultipartEncoderMonitor
@@ -105,6 +106,28 @@ class AgentClient:
 
     def create_tunnel(self, port: int):
         return self._request("post", "/tunnels", data={"port": port}, timeout=30).json()
+
+    def download_process_file(
+        self,
+        process_id: str,
+        remote_path: str,
+        destination: str,
+        progress: Optional[Callable[[int, int], None]] = None,
+    ) -> None:
+        path = quote(remote_path.replace("\\", "/"), safe="/")
+        with self._request(
+            "get", f"/processes/{process_id}/files/{path}", stream=True, timeout=120
+        ) as response:
+            total = int(response.headers.get("Content-Length", 0))
+            completed = 0
+            with open(destination, "wb") as output:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if not chunk:
+                        continue
+                    output.write(chunk)
+                    completed += len(chunk)
+                    if progress:
+                        progress(completed, total)
 
     def ws_logs_url(self, process_id: str) -> str:
         base = self.url.replace("https://", "wss://").replace("http://", "ws://")
