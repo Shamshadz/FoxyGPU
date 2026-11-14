@@ -22,6 +22,7 @@ def test_notebook_command_uses_nbconvert_and_quotes_paths():
     assert command.startswith("grep -Eiv ")
     assert "python -m jupyter nbconvert --to notebook --execute" in command
     assert "--ExecutePreprocessor.kernel_name=python3" in command
+    assert 'PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"' in command
     assert "--ExecutePreprocessor.timeout=-1" in command
     assert "'notebooks/my notebook.ipynb'" in command
 

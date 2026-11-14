@@ -335,6 +335,7 @@ def _notebook_command(notebook: Path, output: str, timeout: int, install_require
         )
     return (
         command
+        + 'PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" '
         + "python -m jupyter nbconvert --to notebook --execute "
         + "--ExecutePreprocessor.kernel_name=python3 "
         + f"--ExecutePreprocessor.timeout={timeout} "

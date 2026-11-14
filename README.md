@@ -235,7 +235,9 @@ Colab's `python3` kernel, even if the notebook was created with a local kernel
 name. Use `--output NAME.ipynb` to choose the remote executed-notebook filename.
 When `--install-requirements` is used, FoxyGPU preserves Colab's preinstalled
 Jupyter stack to avoid replacing its pinned kernel packages. The source notebook
-must be inside `--path`, and `.foxygpuignore` still controls what gets uploaded.
+must be inside `--path`; FoxyGPU adds that project root to `PYTHONPATH`, so a
+notebook in a subdirectory can import sibling project packages. `.foxygpuignore`
+still controls what gets uploaded.
 
 See `foxygpu run --help` for this same set of examples from the CLI.
 
