@@ -1,14 +1,17 @@
 import asyncio
+import fnmatch
+import shlex
 import tempfile
 import webbrowser
 import zipfile
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set
 
 import requests
 import typer
 import websockets
 from rich.console import Console
+from rich.progress import BarColumn, DownloadColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn, TransferSpeedColumn
 from rich.table import Table
 
 from . import github as gh
@@ -78,21 +81,66 @@ def _load_ignores(root: Path) -> Set[str]:
     return ignores
 
 
-def _zip_project(root: Path, ignores: Set[str]) -> Path:
-    fd, tmp_name = tempfile.mkstemp(suffix=".zip")
+def _is_ignored(relative_path: Path, ignores: Set[str]) -> bool:
+    """Match a path against component globs and slash-delimited relative paths."""
+    relative = relative_path.as_posix().strip("/")
+    for raw_pattern in ignores:
+        pattern = raw_pattern.replace("\\", "/").strip("/")
+        if "/" in pattern:
+            if fnmatch.fnmatchcase(relative, pattern) or relative.startswith(pattern + "/"):
+                return True
+        elif any(fnmatch.fnmatchcase(part, pattern) for part in relative_path.parts):
+            return True
+    return False
+
+
+def _included_files(root: Path, ignores: Set[str]) -> List[Path]:
+    included: List[Path] = []
     import os
 
+    for directory, dirs, files in os.walk(root):
+        directory_path = Path(directory)
+        rel_dir = directory_path.relative_to(root)
+        dirs[:] = [name for name in dirs if not _is_ignored(rel_dir / name, ignores)]
+        included.extend(
+            directory_path / name
+            for name in files
+            if not _is_ignored(rel_dir / name, ignores)
+        )
+    return included
+
+
+def _zip_project(
+    root: Path,
+    ignores: Set[str],
+    progress: Optional[Callable[[Path, int], None]] = None,
+) -> Path:
+    fd, tmp_name = tempfile.mkstemp(suffix=".zip")
+    files = _included_files(root, ignores)
+
+    import os
     os.close(fd)
     tmp_zip = Path(tmp_name)
     with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in root.rglob("*"):
-            if path.is_dir():
-                continue
-            rel = path.relative_to(root)
-            if any(part in ignores for part in rel.parts):
-                continue
-            zf.write(path, rel)
+        for path in files:
+            with path.open("rb") as source, zf.open(path.relative_to(root).as_posix(), "w") as target:
+                while chunk := source.read(1024 * 1024):
+                    target.write(chunk)
+                    if progress:
+                        progress(path.relative_to(root), len(chunk))
     return tmp_zip
+
+
+def _transfer_progress() -> Progress:
+    return Progress(
+        TextColumn("{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    )
 
 
 async def _stream_logs(client: AgentClient, process_id: str) -> None:
@@ -224,11 +272,32 @@ def _deploy(
             client.stop_process(previous["id"])
 
     ignores = _load_ignores(root)
-    console.print(f"Zipping {root} ...")
-    zip_path = _zip_project(root, ignores)
+    included = _included_files(root, ignores)
+    source_size = sum(file.stat().st_size for file in included)
+    with _transfer_progress() as progress:
+        zip_task = progress.add_task(
+            f"Zipping {len(included)} files", total=source_size
+        )
+        zip_path = _zip_project(
+            root,
+            ignores,
+            lambda file, amount: progress.update(
+                zip_task, description=f"Zipping {file.as_posix()}", advance=amount
+            ),
+        )
     try:
-        console.print("Uploading ...")
-        project_id = client.upload_project(str(zip_path), project_name)
+        archive_size = zip_path.stat().st_size
+        console.print(
+            f"[green]Packaged[/green] {len(included)} files: {source_size / 1024**2:.1f} MiB "
+            f"source → {archive_size / 1024**2:.1f} MiB archive"
+        )
+        with _transfer_progress() as progress:
+            upload_task = progress.add_task("Uploading compressed project", total=archive_size)
+            project_id = client.upload_project(
+                str(zip_path),
+                project_name,
+                lambda completed, total: progress.update(upload_task, completed=completed, total=total),
+            )
         console.print(f"[green]Project uploaded[/green] ({project_id})")
         if env:
             console.print(f"Passing env vars: {', '.join(env.keys())} (values not shown/logged)")
@@ -250,6 +319,71 @@ def _deploy(
         asyncio.run(_stream_logs(client, process_id))
     finally:
         zip_path.unlink(missing_ok=True)
+
+
+def _notebook_command(notebook: Path, output: str, timeout: int, install_requirements: bool) -> str:
+    """Build the POSIX shell command executed by the Colab agent."""
+    command = ""
+    if install_requirements:
+        # Colab already owns the Jupyter kernel stack. Reinstalling those packages
+        # from a local requirements.txt can replace Colab-pinned versions and stop
+        # notebook execution before it starts.
+        command = (
+            "grep -Eiv '^[[:space:]]*(jupyterlab|ipykernel|jupyter-client|notebook|nbconvert)"
+            "([<>=!~;[:space:]]|$)' requirements.txt > /tmp/foxygpu-requirements.txt "
+            "&& python -m pip install -r /tmp/foxygpu-requirements.txt && "
+        )
+    return (
+        command
+        + "python -m jupyter nbconvert --to notebook --execute "
+        + "--ExecutePreprocessor.kernel_name=python3 "
+        + f"--ExecutePreprocessor.timeout={timeout} "
+        + f"--output {shlex.quote(output)} {shlex.quote(notebook.as_posix())}"
+    )
+
+
+@app.command("run-notebook")
+def run_notebook(
+    notebook: Path = typer.Argument(..., help="Notebook to execute, relative to PATH"),
+    path: Path = typer.Option(Path("."), "--path", "-p", help="Project directory to upload"),
+    output: Optional[str] = typer.Option(
+        None, "--output", "-o", help="Name for the executed notebook on the Colab VM"
+    ),
+    timeout: int = typer.Option(-1, "--timeout", help="Per-cell timeout in seconds; -1 disables it"),
+    install_requirements: bool = typer.Option(
+        False,
+        "--install-requirements",
+        help="Install requirements.txt before execution, while preserving Colab's Jupyter packages",
+    ),
+) -> None:
+    """Upload PATH and execute NOTEBOOK on the connected Colab GPU.
+
+    The executed notebook is written next to NOTEBOOK on the ephemeral Colab VM.
+    Its cell output is streamed locally while it runs.
+    """
+    root = path.resolve()
+    notebook_path = notebook.resolve() if notebook.is_absolute() else (root / notebook).resolve()
+    if not root.is_dir():
+        console.print(f"[red]{root} is not a directory[/red]")
+        raise typer.Exit(1)
+    try:
+        relative_notebook = notebook_path.relative_to(root)
+    except ValueError:
+        console.print("[red]NOTEBOOK must be inside PATH so it can be uploaded.[/red]")
+        raise typer.Exit(1)
+    if not notebook_path.is_file() or notebook_path.suffix != ".ipynb":
+        console.print(f"[red]{notebook_path} is not an .ipynb file[/red]")
+        raise typer.Exit(1)
+    if timeout < -1:
+        console.print("[red]--timeout must be -1 (no limit) or a non-negative number of seconds.[/red]")
+        raise typer.Exit(1)
+
+    remote_output = output or f"{relative_notebook.stem}-executed.ipynb"
+    client = AgentClient.from_config()
+    command = _notebook_command(
+        relative_notebook, remote_output, timeout, install_requirements
+    )
+    _deploy(client, root, command, root.name, expose_after=False, stop_previous=False)
 
 
 @app.command(epilog=RUN_EXAMPLES_EPILOG)

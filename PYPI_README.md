@@ -42,6 +42,9 @@ foxygpu launch                     # opens Colab, no token needed
 foxygpu connect <url> --token <token>
 
 foxygpu run ./my-app --cmd 'pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port $PORT' --expose
+
+# Or execute a notebook on the connected GPU (logs stream to this terminal).
+foxygpu run-notebook ch07/ch07.ipynb --path . --install-requirements
 ```
 
 The agent picks a free port for you and injects it as `$PORT` — you never have

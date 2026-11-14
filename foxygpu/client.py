@@ -1,8 +1,9 @@
 import json
 import sys
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 import requests
+from requests_toolbelt.multipart.encoder import MultipartEncoder, MultipartEncoderMonitor
 
 from .config import load_config
 
@@ -29,20 +30,36 @@ class AgentClient:
         return cls(cfg["url"], cfg["token"])
 
     def _request(self, method: str, path: str, **kwargs) -> requests.Response:
+        headers = dict(self.headers)
+        headers.update(kwargs.pop("headers", {}))
         try:
-            resp = requests.request(method, f"{self.url}{path}", headers=self.headers, **kwargs)
+            resp = requests.request(method, f"{self.url}{path}", headers=headers, **kwargs)
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
             raise SystemExit(DISCONNECTED_MESSAGE.format(url=self.url))
         resp.raise_for_status()
         return resp
 
-    def upload_project(self, zip_path: str, name: str) -> str:
+    def upload_project(
+        self,
+        zip_path: str,
+        name: str,
+        progress: Optional[Callable[[int, int], None]] = None,
+    ) -> str:
         with open(zip_path, "rb") as f:
+            encoder = MultipartEncoder(
+                fields={"file": (f"{name}.zip", f, "application/zip"), "name": name}
+            )
+
+            def on_upload(monitor: MultipartEncoderMonitor) -> None:
+                if progress:
+                    progress(monitor.bytes_read, monitor.len)
+
+            monitor = MultipartEncoderMonitor(encoder, on_upload)
             resp = self._request(
                 "post",
                 "/projects",
-                files={"file": (f"{name}.zip", f, "application/zip")},
-                data={"name": name},
+                data=monitor,
+                headers={"Content-Type": monitor.content_type},
                 timeout=120,
             )
         return resp.json()["project_id"]

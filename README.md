@@ -220,6 +220,23 @@ One-off script or training job (no server, so skip `--expose`):
 foxygpu run ./train-job --cmd 'pip install -r requirements.txt && python train.py'
 ```
 
+### Run a Jupyter notebook
+
+Execute any notebook in the uploaded project on the connected Colab GPU. Cell
+output streams back to your terminal; the executed copy is written beside the
+source notebook on the ephemeral Colab VM:
+
+```bash
+foxygpu run-notebook ch07/ch07.ipynb --path . --install-requirements
+```
+
+`--timeout -1` (the default) disables per-cell timeouts. FoxyGPU always uses
+Colab's `python3` kernel, even if the notebook was created with a local kernel
+name. Use `--output NAME.ipynb` to choose the remote executed-notebook filename.
+When `--install-requirements` is used, FoxyGPU preserves Colab's preinstalled
+Jupyter stack to avoid replacing its pinned kernel packages. The source notebook
+must be inside `--path`, and `.foxygpuignore` still controls what gets uploaded.
+
 See `foxygpu run --help` for this same set of examples from the CLI.
 
 ### Full working example

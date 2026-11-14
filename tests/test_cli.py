@@ -3,13 +3,42 @@ needed) against a real running agent (conftest.agent_server)."""
 
 import re
 import sys
+import zipfile
+from pathlib import Path
 
 import yaml
 from typer.testing import CliRunner
 
 from foxygpu.main import app as cli_app
+from foxygpu.main import _notebook_command, _zip_project
 
 runner = CliRunner()
+
+
+def test_notebook_command_uses_nbconvert_and_quotes_paths():
+    command = _notebook_command(
+        Path("notebooks/my notebook.ipynb"), "result.ipynb", -1, install_requirements=True
+    )
+    assert command.startswith("grep -Eiv ")
+    assert "python -m jupyter nbconvert --to notebook --execute" in command
+    assert "--ExecutePreprocessor.kernel_name=python3" in command
+    assert "--ExecutePreprocessor.timeout=-1" in command
+    assert "'notebooks/my notebook.ipynb'" in command
+
+
+def test_zip_project_honors_component_glob_ignores(tmp_path):
+    (tmp_path / "model.pth").write_text("large checkpoint")
+    (tmp_path / "keep.py").write_text("print('keep')")
+    ignored_dir = tmp_path / "models" / "gpt2"
+    ignored_dir.parent.mkdir()
+    ignored_dir.mkdir()
+    (ignored_dir / "notebook.py").write_text("never upload")
+    archive = _zip_project(tmp_path, {"*.pth", "models/gpt2/"})
+    try:
+        with zipfile.ZipFile(archive) as zf:
+            assert zf.namelist() == ["keep.py"]
+    finally:
+        archive.unlink()
 
 
 def test_connect_run_status_expose_full_flow(agent_server, tmp_path):

@@ -1,6 +1,8 @@
 # Copy this to your project root as `.foxygpuignore` to add extra excludes.
-# One path-component pattern per line (matched against any part of the relative
-# path, not full globs). Everything below is already excluded by default.
+# One ignore pattern per line. A name matches any component (`.venv`), while a
+# slash-delimited path matches relative to the project root (`models/gpt2/`).
+# Shell-style component globs work too: `*.pth` excludes checkpoints at any
+# depth. Everything below is already excluded by default.
 .git
 node_modules
 __pycache__
